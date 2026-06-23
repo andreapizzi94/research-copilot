@@ -66,9 +66,11 @@ For charts:
 }
 
 export async function POST(request: Request) {
+  let lang = "it";
   try {
-    const { query, headers, rows, columnStats, datasetName, lang = "it" }: AnalyzeRequest =
-      await request.json();
+    const body: AnalyzeRequest = await request.json();
+    lang = body.lang ?? "it";
+    const { query, headers, rows, columnStats, datasetName } = body;
 
     if (!rows?.length || !headers?.length) {
       return NextResponse.json({ error: "Nessun dato caricato" }, { status: 400 });
@@ -160,7 +162,7 @@ Format notes:
 
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 4000,
+      max_tokens: 8000,
       system: buildSystemPrompt(lang),
       messages: [{ role: "user", content: userPrompt }],
     });
@@ -168,19 +170,26 @@ Format notes:
     const rawText =
       response.content[0].type === "text" ? response.content[0].text : "{}";
 
-    const jsonMatch =
-      rawText.match(/```json\s*([\s\S]*?)\s*```/) ||
-      rawText.match(/(\{[\s\S]*\})/);
+    // Try to extract JSON: prefer fenced block, fallback to largest {...} span
+    let jsonStr: string | null = null;
+    const fenced = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (fenced?.[1]?.trim().startsWith("{")) {
+      jsonStr = fenced[1];
+    } else {
+      const start = rawText.indexOf("{");
+      const end = rawText.lastIndexOf("}");
+      if (start !== -1 && end > start) jsonStr = rawText.slice(start, end + 1);
+    }
 
-    if (!jsonMatch) {
+    if (!jsonStr) {
       console.error("No JSON in response:", rawText.slice(0, 500));
       return NextResponse.json(
-        { error: "Formato risposta non valido. Riprova." },
+        { error: lang === "en" ? "Invalid response format. Try again." : "Formato risposta non valido. Riprova." },
         { status: 500 }
       );
     }
 
-    const result: AnalysisResult = JSON.parse(jsonMatch[1] ?? jsonMatch[0]);
+    const result: AnalysisResult = JSON.parse(jsonStr);
 
     if (!result.analyses || !Array.isArray(result.analyses)) {
       result.analyses = [];
@@ -192,10 +201,10 @@ Format notes:
     return NextResponse.json(result);
   } catch (err) {
     console.error("Analysis error:", err);
-    const msg =
-      err instanceof SyntaxError
-        ? "Errore nel parsing della risposta AI. Riprova."
-        : "Errore durante l'analisi.";
+    const isJson = err instanceof SyntaxError;
+    const msg = isJson
+      ? (lang === "en" ? "Error parsing AI response. Try again." : "Errore nel parsing della risposta AI. Riprova.")
+      : (lang === "en" ? "Error during analysis. Try again." : "Errore durante l'analisi. Riprova.");
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
