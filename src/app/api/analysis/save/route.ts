@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     const body: SaveRequest = await request.json();
 
     const { data, error } = await supabase
-      .from("data_analyses")
+      .from("data_analyses" as any)
       .insert({
         user_id: user.id,
         dataset_name: body.datasetName,
